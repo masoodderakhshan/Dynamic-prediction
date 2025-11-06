@@ -1,0 +1,197 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# --- Set Matplotlib parameters for article plots ---
+plt.rcParams['font.family'] = 'Dejavu serif'
+plt.rcParams['font.serif'] = ['Dejavu serif']
+plt.rcParams['font.size'] = 12
+plt.rcParams['axes.labelsize'] = 12
+plt.rcParams['xtick.labelsize'] = 10
+plt.rcParams['ytick.labelsize'] = 10
+plt.rcParams['legend.fontsize'] = 10
+plt.rcParams['figure.titlesize'] = 14
+plt.rcParams['axes.titlepad'] = 15
+
+# === File paths ===
+weka3_filepath = r"/content/WEKA-3.csv"
+weka4_filepath = r"/content/WEKA-4-remove(0).csv"
+
+# === Load input features ===
+print("\n=== Loading input features ===")
+df_features = pd.read_csv(weka3_filepath)
+
+# === Load displacement data ===
+print("\n=== Loading displacement data ===")
+df_raw = pd.read_csv(weka4_filepath, header=None)
+
+test_ids = df_raw.iloc[0, 1::2].astype(int).tolist()
+disp_steps = df_raw.iloc[2:, 0].astype(float)
+kpa_cols = df_raw.iloc[2:, 1::2].astype(float)
+
+print("\n=== Reshaping displacement data ===")
+dfs = []
+for idx, test_id in enumerate(test_ids):
+    df_temp = pd.DataFrame({
+        'Displacement_Step': disp_steps,
+        'Displacement_kPa': kpa_cols.iloc[:, idx],
+        'Test': test_id
+    })
+    dfs.append(df_temp)
+df_displacement = pd.concat(dfs, ignore_index=True)
+
+# === Merge ===
+df = pd.merge(df_displacement, df_features, on='Test', how='left')
+
+# === Fill Missing ===
+for col in df.select_dtypes(include=[np.number]).columns:
+    if df[col].isnull().any():
+        df[col].fillna(df[col].median(), inplace=True)
+
+# === Features & Target ===
+features = ['NS', 'Depth', 'W', 'RWD', 'Density', 'Displacement_Step']
+X = df[features]
+y = df['Displacement_kPa']
+
+# === Scale Features (optional, helps fitting stability) ===
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+df_scaled = pd.DataFrame(X_scaled, columns=features)
+df_scaled['Displacement_kPa'] = y.values
+
+# === Train/Test Split ===
+X_train, X_test, y_train, y_test = train_test_split(df_scaled, y, test_size=0.3, random_state=42)
+print(f"\nTrain: {X_train.shape}, Test: {X_test.shape}")
+
+# === Define Custom Curve Function ===
+def curve_func(X_flat, a, b, c, d, e, f, g, h, i):
+    NS, Depth, W, RWD, Density, Displacement_Step = X_flat
+    return (a +
+            b * NS +
+            c * Displacement_Step +
+            d * RWD +
+            e * Displacement_Step**2 +
+            f * NS * Displacement_Step +
+            g * W +
+            h * RWD**2 +
+            i * Density**2)
+
+# === Prepare Inputs for curve_fit ===
+xdata = (
+    X_train['NS'].values,
+    X_train['Depth'].values,
+    X_train['W'].values,
+    X_train['RWD'].values,
+    X_train['Density'].values,
+    X_train['Displacement_Step'].values
+)
+ydata = y_train.values
+
+# === Fit Curve ===
+print("\n=== Fitting Curve ===")
+initial_guess = np.zeros(9)
+params, covariance = curve_fit(curve_func, xdata, ydata, p0=initial_guess, maxfev=10000)
+param_names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']
+
+# Export parameters
+params_dict = dict(zip(param_names, params))
+print("\nFitted Coefficients:")
+for k, v in params_dict.items():
+    print(f"{k} = {v:.6f}")
+
+with open("CurveFit_Coefficients.txt", "w") as f:
+    f.write("Fitted Equation:\n")
+    f.write("Displacement_kPa = a + b*NS + c*Displacement_Step + d*RWD + e*Displacement_Step^2 + f*NS*Displacement_Step + g*W + h*RWD^2 + i*Density^2\n\n")
+    for k, v in params_dict.items():
+        f.write(f"{k} = {v:.6f}\n")
+
+# === Prediction ===
+xdata_test = (
+    X_test['NS'].values,
+    X_test['Depth'].values,
+    X_test['W'].values,
+    X_test['RWD'].values,
+    X_test['Density'].values,
+    X_test['Displacement_Step'].values
+)
+y_pred = curve_func(xdata_test, *params)
+
+# === Evaluate ===
+def evaluate_model(y_true, y_pred):
+    mae = mean_absolute_error(y_true, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    r2 = r2_score(y_true, y_pred)
+    print(f"\n=== Curve Fit Model Metrics ===")
+    print(f"MAE: {mae:.4f}")
+    print(f"RMSE: {rmse:.4f}")
+    print(f"R²: {r2:.4f}")
+    return mae, rmse, r2
+
+mae, rmse, r2 = evaluate_model(y_test, y_pred)
+
+# === Residual Analysis ===
+def plot_residuals(y_true, y_pred, color):
+    residuals = y_true - y_pred
+
+    # --- Residuals vs Predicted ---
+    plt.figure(figsize=(10, 6))
+    plt.scatter(y_pred, residuals, alpha=0.6, edgecolor='k', color=color)
+    plt.axhline(y=0, color='r', linestyle='--', linewidth=2)
+    plt.xlabel('Predicted Stress (kPa)')
+    plt.ylabel('Residuals (Actual - Predicted)')
+    plt.title('Curve Fit: Residuals vs Predicted')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.tight_layout()
+    plt.savefig("Residuals_vs_Predicted.png", dpi=500, bbox_inches='tight')
+    plt.show()
+
+    # --- Distribution of Residuals ---
+    plt.figure(figsize=(10, 6))
+    sns.histplot(residuals, kde=True, bins=30, color=color)
+    plt.xlabel('Residuals')
+    plt.ylabel('Frequency')
+    plt.title('Curve Fit: Distribution of Residuals')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.tight_layout()
+    plt.savefig("Residuals_Distribution.png", dpi=500, bbox_inches='tight')
+    plt.show()
+
+plot_residuals(y_test, y_pred, color="green")
+
+
+# === Actual vs Predicted ===
+def plot_actual_vs_predicted(y_true, y_pred, mae, rmse, r2, filename, color):
+    y_true_reset = y_true.reset_index(drop=True)
+    plt.figure(figsize=(8, 8))
+    plt.scatter(y_true_reset, y_pred, color=color, edgecolor='black', alpha=0.7, s=50)
+    min_val = min(y_true_reset.min(), y_pred.min())
+    max_val = max(y_true_reset.max(), y_pred.max())
+    padding = (max_val - min_val) * 0.05
+    plt.plot([min_val - padding, max_val + padding],
+             [min_val - padding, max_val + padding],
+             'r--', lw=2, label='Ideal Fit (y = x)')
+    plt.xlim(min_val - padding, max_val + padding)
+    plt.ylim(min_val - padding, max_val + padding)
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.xlabel('Actual Stress (kPa)', fontsize=14)
+    plt.ylabel('Predicted Stress (kPa)', fontsize=14)
+    plt.title(f'Curve Fit Model\n$R^2 = {r2:.4f}$', fontsize=16)
+    plt.text(0.05, 0.95, f'RMSE: {rmse:.4f} kPa\nMAE: {mae:.4f} kPa',
+             transform=plt.gca().transAxes, fontsize=12,
+             verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5',
+             facecolor='wheat', alpha=0.5))
+    plt.legend(prop={'size': 12}, loc='lower right')
+    plt.grid(True, linestyle='--', color='gray', linewidth=0.5, alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(filename, dpi=600)
+    plt.show()
+
+plot_actual_vs_predicted(y_test, y_pred, mae, rmse, r2,
+                         "CurveFit_test_plot.png", color="green")
+
+print("\nCurve fitting completed successfully. Coefficients saved to 'CurveFit_Coefficients.txt'.")

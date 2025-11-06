@@ -1,0 +1,10 @@
+=== Polynomial Regression Equation ===
+y = 27.0132 + (9.8884 * NS) + (0.6726 * Depth) + (-1.8761 * W) + (4.0457 * RWD) + (1.9375 * Density) + (6.1825 * Displacement_Step) + (-0.3432 * NS^2) + (-0.0360 * NS Depth) + (-0.5289 * NS W) + (0.5983 * NS RWD) + (-1.3238 * NS Density) + (2.2092 * NS Displacement_Step) + (0.5772 * Depth^2) + (-0.9270 * Depth W) + (-0.3694 * Depth RWD) + (-0.5414 * Depth Density) + (0.4415 * Depth Displacement_Step) + (0.1632 * W^2) + (0.1323 * W RWD) + (0.3152 * W Density) + (-1.1227 * W Displacement_Step) + (-1.3194 * RWD^2) + (0.4508 * RWD Density) + (1.4414 * RWD Displacement_Step) + (0.7434 * Density^2) + (0.1621 * Density Displacement_Step) + (-2.8316 * Displacement_Step^2)
+
+=== Feature Scaling Info ===
+NS: (x - 47.4286) / 24.8818
+Depth: (x - 10.2143) / 5.5218
+W: (x - 34.5946) / 5.1684
+RWD: (x - 1.5343) / 2.0726
+Density: (x - 1.4934) / 0.0564
+Displacement_Step: (x - 7.5000) / 4.4721

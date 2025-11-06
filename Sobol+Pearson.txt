@@ -1,0 +1,114 @@
+# --- Import Libraries ---
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.linear_model import LinearRegression
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import os
+
+# --- Global Settings ---
+plt.rcParams['font.family'] = 'DejaVu Serif'
+SAVE_DPI = 600
+SAVE_PATH = r'D:\Arshad-Masood\Seminar\Article'
+
+# --- 1. Load Data ---
+try:
+    file_path = '/content/WEKA.xlsx'
+    data = pd.read_excel(file_path)
+except FileNotFoundError:
+    print(f"Error: The file '{file_path}' was not found.")
+    exit()
+
+data.columns = data.columns.str.replace(' ', '_')
+
+# --- 2. Define Features and Target ---
+features = ['Depth', 'Normal_Stress', 'Moisture', 'Density', 'RWD']
+target = 'ShearStress'
+
+X = data[features].values
+y = data[target].values
+
+# --- 3. Normalize Inputs ---
+scaler = MinMaxScaler()
+X_scaled = scaler.fit_transform(X)
+
+# --- 4. Define Sobol Problem ---
+problem = {
+    'num_vars': len(features),
+    'names': features,
+    'bounds': [[0, 1]] * len(features)
+}
+
+# --- 5. Sample Parameter Space (Saltelli) ---
+param_values = saltelli.sample(problem, 512, calc_second_order=True)
+
+# --- 6. Fit Model (Linear Regression as Surrogate) ---
+model = LinearRegression()
+model.fit(X_scaled, y)
+Y_pred = model.predict(param_values)
+
+# --- 7. Perform Sobol Sensitivity Analysis ---
+Si = sobol.analyze(problem, Y_pred, calc_second_order=True, print_to_console=False)
+
+# --- 8. Organize Sobol Results ---
+sobol_df = pd.DataFrame({
+    'Feature': features,
+    'S1': Si['S1'],
+    'ST': Si['ST']
+})
+
+print("\n--- Sobol Sensitivity Indices ---")
+print(sobol_df.round(3))
+print("-" * 40)
+
+# --- 9. Compute Pearson Correlation Matrix ---
+corr_matrix = data[features + [target]].corr(method='pearson')
+print("\n--- Pearson Correlation Matrix ---")
+print(corr_matrix.round(2))
+
+# --- 10. Plot Combined Visualization ---
+fig, axes = plt.subplots(1, 2, figsize=(16, 7), dpi=SAVE_DPI)
+
+# (A) Correlation Heatmap
+mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+sns.heatmap(
+    corr_matrix,
+    mask=mask,
+    annot=True,
+    cmap='coolwarm',
+    fmt=".2f",
+    linewidths=0.5,
+    vmin=-1, vmax=1,
+    annot_kws={"size": 12},
+    ax=axes[0]
+)
+axes[0].set_title('Pearson Correlation Matrix', fontsize=16)
+axes[0].tick_params(axis='x', rotation=45)
+axes[0].tick_params(axis='y', rotation=0)
+
+# (B) Sobol Sensitivity Plot
+bar_width = 0.35
+indices = np.arange(len(features))
+axes[1].bar(indices - bar_width/2, sobol_df['S1'], bar_width, label='First-order (S1)')
+axes[1].bar(indices + bar_width/2, sobol_df['ST'], bar_width, label='Total-order (ST)')
+axes[1].set_xticks(indices)
+axes[1].set_xticklabels(features, rotation=45)
+axes[1].set_ylabel('Sobol Index Value', fontsize=12)
+axes[1].set_title('Sobol Sensitivity Indices', fontsize=16)
+axes[1].legend()
+axes[1].grid(alpha=0.3)
+
+plt.tight_layout()
+
+# --- 11. Save the Plot ---
+if not os.path.exists(SAVE_PATH):
+    os.makedirs(SAVE_PATH)
+
+save_file = os.path.join(SAVE_PATH, 'Correlation_and_Sobol_Sensitivity.png')
+plt.savefig(save_file, dpi=SAVE_DPI, bbox_inches='tight')
+plt.show()
+
+print(f"\n✅ Combined plot saved successfully at:\n{save_file}")

@@ -1,0 +1,270 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split, cross_val_score, KFold
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+import shap
+
+# --- Set Matplotlib parameters for article plots ---
+plt.rcParams['font.family'] = 'Dejavu serif'
+plt.rcParams['font.serif'] = ['Dejavu serif']
+plt.rcParams['font.size'] = 12
+plt.rcParams['axes.labelsize'] = 12
+plt.rcParams['xtick.labelsize'] = 10
+plt.rcParams['ytick.labelsize'] = 10
+plt.rcParams['legend.fontsize'] = 10
+plt.rcParams['figure.titlesize'] = 14
+plt.rcParams['axes.titlepad'] = 15
+
+# === File paths ===
+weka3_filepath = r"/content/WEKA-3.csv"
+weka4_filepath = r"/content/WEKA-4.csv"
+
+# === Load input features ===
+print("\n=== Loading input features ===")
+df_features = pd.read_csv(weka3_filepath)
+
+# === Load displacement data ===
+print("\n=== Loading displacement data ===")
+df_raw = pd.read_csv(weka4_filepath, header=None)
+
+test_ids = df_raw.iloc[0, 1::2].astype(int).tolist()
+disp_steps = df_raw.iloc[2:, 0].astype(float)
+kpa_cols = df_raw.iloc[2:, 1::2].astype(float)
+
+print("\n=== Reshaping displacement data ===")
+dfs = []
+for idx, test_id in enumerate(test_ids):
+    df_temp = pd.DataFrame({
+        'Displacement_Step': disp_steps,
+        'Displacement_kPa': kpa_cols.iloc[:, idx],
+        'Test': test_id
+    })
+    dfs.append(df_temp)
+df_displacement = pd.concat(dfs, ignore_index=True)
+
+# === Merge ===
+df = pd.merge(df_displacement, df_features, on='Test', how='left')
+
+# === Fill Missing ===
+for col in df.select_dtypes(include=[np.number]).columns:
+    if df[col].isnull().any():
+        df[col].fillna(df[col].median(), inplace=True)
+
+# === Features & Target ===
+features = ['NS', 'Depth', 'W', 'RWD', 'Density', 'Displacement_Step']
+X = df[features]
+y = df['Displacement_kPa']
+
+# === Scale ===
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# === Train/Val/Test Split ===
+X_train, X_temp, y_train, y_temp = train_test_split(X_scaled, y, test_size=0.30, random_state=42)
+X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+print(f"\nTrain: {X_train.shape}, Validation: {X_val.shape}, Test: {X_test.shape}")
+
+# === Polynomial Regression ===
+degree = 2  # you can change to 3 for more complexity
+poly = PolynomialFeatures(degree=degree, include_bias=False)
+X_poly_train = poly.fit_transform(X_train)
+X_poly_val = poly.transform(X_val)
+X_poly_test = poly.transform(X_test)
+
+poly_model = LinearRegression()
+poly_model.fit(X_poly_train, y_train)
+
+# === Predict ===
+y_test_pred_poly = poly_model.predict(X_poly_test)
+
+# === Evaluation Function ===
+def evaluate_model(model_name, y_true, y_pred):
+    mae = mean_absolute_error(y_true, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    r2 = r2_score(y_true, y_pred)
+    print(f"\n=== {model_name} Metrics ===")
+    print(f"MAE: {mae:.4f}")
+    print(f"RMSE: {rmse:.4f}")
+    print(f"R²: {r2:.4f}")
+    return mae, rmse, r2
+
+mae_poly, rmse_poly, r2_poly = evaluate_model("Polynomial Regression", y_test, y_test_pred_poly)
+
+# === Export Polynomial Equation ===
+feature_names = poly.get_feature_names_out(features)
+coeffs = poly_model.coef_
+intercept = poly_model.intercept_
+
+equation = "y = {:.4f}".format(intercept)
+for coef, name in zip(coeffs, feature_names):
+    equation += " + ({:.4f} * {})".format(coef, name)
+
+with open("Polynomial_Equation.txt", "w") as f:
+    f.write(equation)
+
+print("\nPolynomial regression equation exported to 'Polynomial_Equation.txt'")
+
+# === Residual Analysis ===
+def plot_residuals(y_true, y_pred, model_name, color):
+    residuals = y_true - y_pred
+
+    # --- Residuals vs Predicted ---
+    plt.figure(figsize=(10, 6))
+    plt.scatter(y_pred, residuals, alpha=0.6, edgecolor='k', color=color)
+    plt.axhline(y=0, color='r', linestyle='--', linewidth=2)
+    plt.xlabel('Predicted Stress (kPa)')
+    plt.ylabel('Residuals (Actual - Predicted)')
+    plt.title(f'{model_name}: Residuals vs Predicted')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(f"{model_name.replace(' ', '_')}_Residual_Scatter.png", dpi=500, bbox_inches='tight')
+    plt.show()
+
+    # --- Histogram of Residuals ---
+    plt.figure(figsize=(10, 6))
+    sns.histplot(residuals, kde=True, bins=30, color=color)
+    plt.xlabel('Residuals')
+    plt.ylabel('Frequency')
+    plt.title(f'{model_name}: Distribution of Residuals')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(f"{model_name.replace(' ', '_')}_Residual_Hist.png", dpi=500, bbox_inches='tight')
+    plt.show()
+
+# --- Call the function ---
+plot_residuals(y_test, y_test_pred_poly, "Polynomial Regression", color="green")
+
+
+# === Actual vs Predicted Plot ===
+def plot_actual_vs_predicted(y_true, y_pred, mae, rmse, r2, model_name, filename, color):
+    y_true_reset = y_true.reset_index(drop=True)
+    plt.figure(figsize=(8, 8))
+    plt.scatter(y_true_reset, y_pred, color=color, edgecolor='black', alpha=0.7, s=50)
+
+    min_val = min(y_true_reset.min(), y_pred.min())
+    max_val = max(y_true_reset.max(), y_pred.max())
+    padding = (max_val - min_val) * 0.05
+
+    plt.plot([min_val - padding, max_val + padding],
+             [min_val - padding, max_val + padding],
+             'r--', lw=2, label='Ideal Fit (y = x)')
+
+    plt.xlim(min_val - padding, max_val + padding)
+    plt.ylim(min_val - padding, max_val + padding)
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.xlabel('Actual Stress (kPa)', fontsize=14)
+    plt.ylabel('Predicted Stress (kPa)', fontsize=14)
+    plt.title(f'{model_name}: Actual vs Predicted\n$R^2 = {r2:.4f}$', fontsize=16)
+    plt.text(0.05, 0.95, f'RMSE: {rmse:.4f} kPa\nMAE: {mae:.4f} kPa',
+             transform=plt.gca().transAxes, fontsize=12,
+             verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='wheat', alpha=0.5))
+    plt.legend(prop={'size': 12}, loc='lower right')
+    plt.grid(True, linestyle='--', color='gray', linewidth=0.5, alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(filename, dpi=600)
+    plt.show()
+
+plot_actual_vs_predicted(y_test, y_test_pred_poly, mae_poly, rmse_poly, r2_poly,
+                         "Polynomial Regression", "Poly_test_plot.png", color="green")
+
+# === Cross-Validation ===
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+cv_scores = cross_val_score(poly_model, poly.fit_transform(X_scaled), y, cv=kf, scoring='r2')
+print("\nPolynomial Regression 5-Fold CV R² scores:", cv_scores)
+print("Mean R²:", cv_scores.mean(), "| Std:", cv_scores.std())
+
+# === SHAP Feature Importance (Approximation for Linear Model) ===
+print("\n=== Calculating SHAP values for Polynomial Regression ===")
+X_poly_scaled = poly.fit_transform(X_scaled)
+explainer = shap.Explainer(poly_model, X_poly_scaled)
+shap_values = explainer(X_poly_scaled)
+
+X_poly_df = pd.DataFrame(X_poly_scaled, columns=feature_names)
+plt.figure(figsize=(10, 6))
+shap.summary_plot(shap_values, X_poly_df, show=False)
+plt.title('SHAP Feature Importance (Polynomial Regression)', fontsize=14)
+plt.savefig(r"SHAP_Poly_Feature_Importance.png", dpi=400, bbox_inches='tight')
+plt.show()
+print("SHAP plot saved to 'SHAP_Poly_Feature_Importance.png'")
+
+# === Final Predicted Shear Stress–Displacement Curves (4 Subplots) ===
+import numpy as np
+import matplotlib.pyplot as plt
+
+# --- Fixed Inputs ---
+NS_values = [20, 40]
+W_values = [30, 40]
+Depth = 10
+Density = 1.5
+RWD_values = [0, 1, 2, 4]
+Displacement_Step = np.linspace(0, 15, 30)  # smooth curve
+
+# --- Marker shapes for each RWD ---
+markers = {0: 's', 1: 'o', 2: '^', 4: 'D'}  # square, circle, triangle, diamond
+
+# --- Create Figure (2×2) ---
+fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=True, sharey=True)
+
+for i, NS in enumerate(NS_values):
+    for j, W in enumerate(W_values):
+        ax = axes[i, j]
+        for RWD in RWD_values:
+            # Prepare DataFrame for predictions
+            data = pd.DataFrame({
+                'NS': [NS] * len(Displacement_Step),
+                'Depth': [Depth] * len(Displacement_Step),
+                'W': [W] * len(Displacement_Step),
+                'RWD': [RWD] * len(Displacement_Step),
+                'Density': [Density] * len(Displacement_Step),
+                'Displacement_Step': Displacement_Step
+            })
+
+            # Apply scaling and polynomial transformation
+            X_scaled_plot = scaler.transform(data)
+            X_poly_plot = poly.transform(X_scaled_plot)
+
+            # Predict stress
+            Stress_pred = poly_model.predict(X_poly_plot)
+
+            # Plot with marker for each RWD
+            ax.plot(Displacement_Step, Stress_pred, marker=markers[RWD], markersize=5,
+                    label=f'RWD = {RWD}', linewidth=2)
+
+        ax.set_title(f'NS = {NS} kPa, W = {W}%', fontsize=13, weight='bold')
+        ax.set_xlabel('Displacement (mm)', fontsize=12)
+        ax.grid(True, linestyle='--', alpha=0.6)
+        if j == 0:
+            ax.set_ylabel('Predicted Shear Stress (kPa)', fontsize=12)
+        ax.legend(title='RWD', fontsize=9)
+        ax.tick_params(axis='both', labelsize=10)
+
+# --- Global Title and Layout ---
+plt.suptitle('Predicted Shear Stress–Displacement Curves\n(Polynomial Regression Model)', 
+             fontsize=16, weight='bold')
+plt.tight_layout(rect=[0, 0, 1, 0.94])
+plt.savefig("Predicted_Shear_Stress_Displacement_4plots.png", dpi=600, bbox_inches='tight')
+plt.show()
+
+print("\n4-panel predicted shear stress–displacement figure saved as 'Predicted_Shear_Stress_Displacement_4plots.png'")
+
+
+
+# Get scaler parameters
+means = scaler.mean_
+stds = np.sqrt(scaler.var_)  # or use scaler.scale_
+
+# Create a dictionary for easy lookup
+scaling_info = dict(zip(features, zip(means, stds)))
+
+# Export scaling info alongside equation
+with open("Polynomial_Equation.txt", "w") as f:
+    f.write("=== Polynomial Regression Equation ===\n")
+    f.write(equation + "\n\n")
+    f.write("=== Feature Scaling Info ===\n")
+    for feat in features:
+        mean, std = scaling_info[feat]
+        f.write(f"{feat}: (x - {mean:.4f}) / {std:.4f}\n")
