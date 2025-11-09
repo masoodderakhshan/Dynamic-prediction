@@ -1,0 +1,203 @@
+import pandas as pd
+import numpy as np
+import torch
+import torch.nn as nn
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+import matplotlib.pyplot as plt
+
+# --- Plotting style (article-quality) ---
+plt.rcParams['font.family'] = 'DejaVu Serif'
+plt.rcParams['font.size'] = 12
+plt.rcParams['axes.labelsize'] = 12
+plt.rcParams['xtick.labelsize'] = 10
+plt.rcParams['ytick.labelsize'] = 10
+plt.rcParams['legend.fontsize'] = 10
+plt.rcParams['figure.titlesize'] = 14
+plt.rcParams['axes.titlepad'] = 15
+
+# --- Load data ---
+weka3_filepath = "/content/WEKA-3.csv"
+weka4_filepath = "/content/WEKA-4.csv"
+df_features = pd.read_csv(weka3_filepath)
+df_raw = pd.read_csv(weka4_filepath, header=None)
+
+test_ids = df_raw.iloc[0, 1::2].astype(int).tolist()
+disp_steps = df_raw.iloc[2:, 0].astype(float)
+kpa_cols = df_raw.iloc[2:, 1::2].astype(float)
+
+dfs = []
+for idx, test_id in enumerate(test_ids):
+    df_temp = pd.DataFrame({
+        'Displacement_Step': disp_steps,
+        'Displacement_kPa': kpa_cols.iloc[:, idx],
+        'Test': test_id
+    })
+    dfs.append(df_temp)
+df_displacement = pd.concat(dfs, ignore_index=True)
+df = pd.merge(df_displacement, df_features, on='Test', how='left')
+df.fillna(df.median(numeric_only=True), inplace=True)
+
+# --- Features ---
+features = ['NS', 'Depth', 'W', 'RWD','Density', 'Displacement_Step']
+X = df[features].values
+y = df['Displacement_kPa'].values
+
+# --- Physics equation ---
+def physics_equation(NS, Depth, W, RWD, Density, Disp):
+    NS_s = (NS - 47.4286) / 24.8818
+    Depth_s = (Depth - 10.2143) / 5.5218
+    W_s = (W - 34.5946) / 5.1684
+    RWD_s = (RWD - 1.5343) / 2.0726
+    Density_s = (Density - 1.4934) / 0.0564
+    Disp_s = (Disp - 7.5) / 4.4721
+    return (27.0132 + 9.8884*NS_s + 0.6726*Depth_s - 1.8761*W_s + 4.0457*RWD_s + 1.9375*Density_s +
+            6.1825*Disp_s - 0.3432*NS_s**2 - 0.0360*NS_s*Depth_s - 0.5289*NS_s*W_s + 0.5983*NS_s*RWD_s
+            -1.3238*NS_s*Density_s + 2.2092*NS_s*Disp_s + 0.5772*Depth_s**2 - 0.9270*Depth_s*W_s
+            -0.3694*Depth_s*RWD_s -0.5414*Depth_s*Density_s + 0.4415*Depth_s*Disp_s + 0.1632*W_s**2
+            +0.1323*W_s*RWD_s +0.3152*W_s*Density_s -1.1227*W_s*Disp_s -1.3194*RWD_s**2
+            +0.4508*RWD_s*Density_s +1.4414*RWD_s*Disp_s +0.7434*Density_s**2 +0.1621*Density_s*Disp_s
+            -2.8316*Disp_s**2)
+
+y_phys = np.array([physics_equation(*x) for x in X])
+
+# --- Split ---
+X_train, X_test, y_train, y_test, y_phys_train, y_phys_test = train_test_split(
+    X, y, y_phys, test_size=0.2, random_state=42
+)
+
+# --- Scale ---
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# --- Torch tensors ---
+X_train_t = torch.tensor(X_train_scaled, dtype=torch.float32)
+y_train_t = torch.tensor(y_train.reshape(-1, 1), dtype=torch.float32)
+y_phys_t = torch.tensor(y_phys_train.reshape(-1, 1), dtype=torch.float32)
+
+X_test_t = torch.tensor(X_test_scaled, dtype=torch.float32)
+y_test_t = torch.tensor(y_test.reshape(-1, 1), dtype=torch.float32)
+
+# --- Simple neural network ---
+class PINN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(6, 32),
+            nn.ReLU(),
+            nn.Linear(32, 16),
+            nn.ReLU(),
+            nn.Linear(16, 1)
+        )
+
+    def forward(self, x):
+        return self.layers(x)
+
+model = PINN()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+mse = nn.MSELoss()
+
+lambda_phys = 0.2  # Weight for physics regularization
+alpha = 0.7        # Weight for physics–data blending
+
+# --- Training loop ---
+for epoch in range(3000):
+    model.train()
+    optimizer.zero_grad()
+    
+    y_ml = model(X_train_t)
+    y_pred = alpha * y_phys_t + (1 - alpha) * y_ml
+    loss_data = mse(y_pred, y_train_t)
+    loss_phys = mse(y_ml, y_phys_t)
+    loss = loss_data + lambda_phys * loss_phys
+
+    loss.backward()
+    optimizer.step()
+
+    if epoch % 500 == 0:
+        print(f"Epoch {epoch}: Total Loss = {loss.item():.4f}")
+
+# --- Evaluation ---
+model.eval()
+with torch.no_grad():
+    y_test_ml = model(X_test_t)
+    y_test_phys = torch.tensor(y_phys_test.reshape(-1, 1), dtype=torch.float32)
+    y_test_pred = alpha * y_test_phys + (1 - alpha) * y_test_ml
+
+    y_true = y_test_t.numpy().flatten()
+    y_pred = y_test_pred.numpy().flatten()
+
+    mae = mean_absolute_error(y_true, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    r2 = r2_score(y_true, y_pred)
+    print(f"\nTest R²: {r2:.4f}, RMSE: {rmse:.4f}, MAE: {mae:.4f}")
+
+# --- (1) Actual vs Predicted Plot with RMSE and MAE ---
+plt.figure(figsize=(8, 8))
+plt.scatter(y_true, y_pred, color="blue", edgecolor="black", alpha=0.7, s=60, label='Predicted')
+min_val = min(y_true.min(), y_pred.min())
+max_val = max(y_true.max(), y_pred.max())
+plt.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2, label='Ideal Fit (y=x)')
+
+# Labels and title
+plt.xlabel('Actual Stress (kPa)')
+plt.ylabel('Predicted Stress (kPa)')
+plt.title('Physics-Informed Model: Actual vs Predicted', fontsize=14)
+
+# Add metrics text box (R², RMSE, MAE)
+textstr = (
+    f"$R^2$ = {r2:.4f}\n"
+    f"RMSE = {rmse:.4f}\n"
+    f"MAE = {mae:.4f}"
+)
+plt.text(
+    0.05, 0.95, textstr,
+    transform=plt.gca().transAxes,
+    fontsize=12,
+    verticalalignment='top',
+    bbox=dict(boxstyle='round,pad=0.4', facecolor='white', edgecolor='gray', alpha=0.8)
+)
+
+plt.legend(loc='lower right')
+plt.grid(True, linestyle='--', alpha=0.5)
+plt.tight_layout()
+plt.savefig("PINN_Actual_vs_Predicted.png", dpi=500, bbox_inches='tight')
+plt.show()
+
+
+# --- (2) Predict for requested combinations ---
+RWD_vals = [0, 1, 2, 3, 4, 5]
+W_vals = [30, 40]
+NS_vals = [25, 35, 45]
+Depth = 10
+Density = 1.5
+Disp_vals = np.linspace(0, 15, 50)  # displacement range for prediction
+
+pred_results = []
+model.eval()
+
+for ns in NS_vals:
+    for w in W_vals:
+        for rwd in RWD_vals:
+            for disp in Disp_vals:
+                x_input = np.array([[ns, Depth, w, rwd, Density, disp]])
+                x_scaled = scaler.transform(x_input)
+                x_tensor = torch.tensor(x_scaled, dtype=torch.float32)
+                with torch.no_grad():
+                    y_ml = model(x_tensor)
+                    y_phys = torch.tensor([[physics_equation(ns, Depth, w, rwd, Density, disp)]], dtype=torch.float32)
+                    y_pred = alpha * y_phys + (1 - alpha) * y_ml
+                    pred_results.append([ns, w, rwd, disp, y_pred.item()])
+
+pred_df = pd.DataFrame(pred_results, columns=['NS','W','RWD','Displacement_Step','Predicted_kPa'])
+
+# Find max Displacement_kPa
+max_row = pred_df.loc[pred_df['Predicted_kPa'].idxmax()]
+print("\n=== Maximum Predicted Displacement_kPa ===")
+print(max_row)
+
+# Optionally save all predictions
+pred_df.to_csv("PINN_Predictions.csv", index=False)
+print("\nAll prediction results saved to 'PINN_Predictions.csv'")

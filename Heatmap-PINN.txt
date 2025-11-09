@@ -1,0 +1,92 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+# --- Set Matplotlib parameters for article plots ---
+plt.rcParams['font.family'] = 'Dejavu serif'
+plt.rcParams['font.serif'] = ['Dejavu serif']
+plt.rcParams['font.size'] = 12
+plt.rcParams['axes.labelsize'] = 12
+plt.rcParams['xtick.labelsize'] = 10
+plt.rcParams['ytick.labelsize'] = 10
+plt.rcParams['legend.fontsize'] = 10
+plt.rcParams['figure.titlesize'] = 14
+plt.rcParams['axes.titlepad'] = 15
+# --- Data Preparation (No change needed) ---
+data = {
+    "W": [30,30,30,30,30,30,40,40,40,40,40,40],
+    "RWD": [0,1,2,3,4,5,0,1,2,3,4,5],
+    "Cohesion (PE)": [5.56,7.86,9.63,10.82,11.58,11.66,3.62,5.68,7.39,8.40,9.01,9.01],
+    "Friction angle (PE)": [25.87,26.90,27.90,28.95,29.85,30.92,22.20,23.42,24.38,25.53,26.52,27.57],
+    "Cohesion (PINN)": [6.34,8.51,8.34,9.35,10.08,11.04,3.41,6.49,7.08,7.70,8.63,9.19],
+    "Friction angle (PINN)": [23.51,26.69,30.74,31.40,31.91,31.76,22.13,22.85,25.62,26.57,26.88,27.22]
+}
+df = pd.DataFrame(data)
+
+
+# 2. Setup the 2x2 figure
+fig, axes = plt.subplots(2, 2, figsize=(11, 10)) # Increased size
+plt.subplots_adjust(hspace=0.4, wspace=0.3)
+
+# 3. Define all properties and W values
+properties = ["Cohesion", "Friction angle"]
+w_values = [30, 40]
+
+# 4. Determine global min/max for color scale (Optional but good for comparison)
+all_values = df.iloc[:, 2:].values.flatten()
+vmin_global = np.floor(all_values.min())
+vmax_global = np.ceil(all_values.max())
+
+# 5. Loop and Plot
+for i, prop in enumerate(properties):
+    for j, w_val in enumerate(w_values):
+        ax = axes[i, j]
+        
+        # Filter data for the specific W
+        subset = df[df["W"] == w_val].copy()
+        
+        # Create the 2x6 matrix for the heatmap
+        values = pd.DataFrame({
+            "PE": subset[f"{prop} (PE)"].values,
+            "PINN": subset[f"{prop} (PINN)"].values
+        }, index=subset["RWD"])
+        
+        # Transpose for RWD on the x-axis, Model on the y-axis (as in original logic)
+        plot_data = values.T
+        
+        # Determine specific color map and annotation format
+        cmap_to_use = "Blues" if "Cohesion" in prop else "Blues"
+        
+        # Heatmap plot
+        sns.heatmap(
+            plot_data, 
+            annot=True, 
+            fmt=".2f", 
+            cmap=cmap_to_use, 
+            cbar=True, # Will use a separate color bar for each plot
+            cbar_kws={'shrink': 0.7, 'label': f'Value ({prop})'}, 
+            linewidths=0.5, # Adds a thin border for elegance
+            linecolor='lightgray',
+            ax=ax
+        )
+        
+        # Customize labels and titles
+        model_name = "Model"
+        
+        ax.set_title(f"({chr(97 + i * 2 + j)}) {prop} values for $W={w_val}$", 
+                     fontsize=14,
+                     y=1.05)
+        
+        ax.set_xlabel("RWD", fontsize=12)
+        ax.set_ylabel(model_name, fontsize=12)
+        ax.tick_params(axis='both', which='major', labelsize=10)
+
+
+# --- Save and Show ---
+fig.suptitle('Comparison of Cohesion and Friction Angle by Model and Load ($W$)', 
+             fontsize=16,
+             y=0.95)
+             
+plt.tight_layout(rect=[0, 0, 1, 0.9]) # Adjust layout to make space for suptitle
+plt.savefig("Elegant_Heatmap_Article.png", dpi=600, bbox_inches='tight') # High DPI for articles
+plt.show()
