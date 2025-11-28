@@ -22,11 +22,10 @@ submitted to *Catena*.
 
 **Masoud Ebrahimi Derakhshan(Corresponding Author)**
 School of Civil Engineering, Iran University of Science and Technology (IUST), Tehran, Iran
-ORCID: [Insert]
+ORCID: 0009-0009-3453-8304
 
 **Mehrab Ramzani **
 School of Civil Engineering, Iran University of Science and Technology (IUST), Tehran, Iran
-ORCID:
 
 ---
 
@@ -43,12 +42,3 @@ If you use this repository, please cite the following manuscript:
   note={Submitted}
 }
 ```
-
----
-
-## 📧 Contact
-
-For questions or collaborations, please contact the corresponding author:
-**Seyed Mostafa Siadatmousavi** – [Add email]
-
----
