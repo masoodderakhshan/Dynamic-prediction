@@ -3,7 +3,9 @@
 ### 📝 Status
 
 **Journal:** Catena (Submitted)
-**License:** [Specify your license here, e.g., MIT / CC-BY / Apache]
+**License:** [![Status](https://img.shields.io/badge/Status-Submitted-blue)](https://www.springer.com/journal/11069)
+[![Journal](https://img.shields.io/badge/Journal-Natural%20Hazards-orange)](https://www.springer.com/journal/11069)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
 
