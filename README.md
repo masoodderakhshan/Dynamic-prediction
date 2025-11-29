@@ -4,7 +4,7 @@
 
 **Journal:** Catena (Submitted)
 **License:** [![Status](https://img.shields.io/badge/Status-Submitted-blue)](https://www.Elsevier.com/journal/11069)
-[![Journal](https://img.shields.io/badge/Journal-Catena-orange)](https://www.Elsevier.com/journal/11069)
+[![Journal](https://img.shields.io/badge/Journal-Engineering Research Express-orange)](https://www.Elsevier.com/journal/11069)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
@@ -39,7 +39,7 @@ If you use this repository, please cite the following manuscript:
 @article{Ebrahimi Derakhshan 2025 Subsidence,
   title={Dynamic and Interpretable Modelling of Root-Soil Shear Behavior using Polynomial Regression and Physics-Informed Neural Networks},
   author={Ebrahimi Derakhshan, Masoud and Ramzani, Mehrab},
-  journal={Catena},
+  journal={Engineering Research Express},
   year={2025},
   note={Submitted}
 }
