@@ -2,7 +2,7 @@
 
 ### 📝 Status
 
-**Journal:** Catena (Submitted)
+**Journal:** Engineering Research Express (Submitted)
 **License:** [![Status](https://img.shields.io/badge/Status-Submitted-blue)](https://www.Elsevier.com/journal/11069)
 [![Journal](https://img.shields.io/badge/Journal-EngineeringResearchExpress-orange)](https://www.Elsevier.com/journal/11069)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
