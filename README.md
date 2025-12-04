@@ -17,7 +17,7 @@ Conventional eco-geotechnical analysis relies on static strength parameters, lim
 This repository includes the source codes and methodology for the article:
 
 **"Dynamic and Interpretable Modelling of Root-Soil Shear Behavior using Polynomial Regression and Physics-Informed Neural Networks"**,
-submitted to *Catena*.
+submitted to *EngineeringResearchExpress*.
 
 
 ## 👥 Authors
