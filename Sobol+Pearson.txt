@@ -70,7 +70,7 @@ print("\n--- Pearson Correlation Matrix ---")
 print(corr_matrix.round(2))
 
 # --- 10. Plot Combined Visualization ---
-fig, axes = plt.subplots(1, 2, figsize=(16, 7), dpi=SAVE_DPI)
+fig, axes = plt.subplots(1, 2, figsize=(11, 5), dpi=SAVE_DPI)
 
 # (A) Correlation Heatmap
 mask = np.triu(np.ones_like(corr_matrix, dtype=bool))

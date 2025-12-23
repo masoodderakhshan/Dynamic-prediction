@@ -20,7 +20,7 @@ plt.rcParams['axes.titlepad'] = 15
 
 # === File paths ===
 weka3_filepath = r"/content/WEKA-3.csv"
-weka4_filepath = r"/content/WEKA-4-remove(0).csv"
+weka4_filepath = r"/content/WEKA-4.csv"
 
 # === Load input features ===
 print("\n=== Loading input features ===")
@@ -167,7 +167,7 @@ plot_residuals(y_test, y_pred, color="green")
 # === Actual vs Predicted ===
 def plot_actual_vs_predicted(y_true, y_pred, mae, rmse, r2, filename, color):
     y_true_reset = y_true.reset_index(drop=True)
-    plt.figure(figsize=(8, 8))
+    plt.figure(figsize=(6, 6))
     plt.scatter(y_true_reset, y_pred, color=color, edgecolor='black', alpha=0.7, s=50)
     min_val = min(y_true_reset.min(), y_pred.min())
     max_val = max(y_true_reset.max(), y_pred.max())
@@ -181,11 +181,11 @@ def plot_actual_vs_predicted(y_true, y_pred, mae, rmse, r2, filename, color):
     plt.xlabel('Actual Stress (kPa)', fontsize=14)
     plt.ylabel('Predicted Stress (kPa)', fontsize=14)
     plt.title(f'Curve Fit Model\n$R^2 = {r2:.4f}$', fontsize=16)
-    plt.text(0.05, 0.95, f'RMSE: {rmse:.4f} kPa\nMAE: {mae:.4f} kPa',
-             transform=plt.gca().transAxes, fontsize=12,
+    plt.text(0.05, 0.95, f"$R^2$ = {r2:.4f}\n" f'RMSE: {rmse:.4f} kPa\nMAE: {mae:.4f} kPa',
+             transform=plt.gca().transAxes, fontsize=14,
              verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5',
              facecolor='wheat', alpha=0.5))
-    plt.legend(prop={'size': 12}, loc='lower right')
+    plt.legend(prop={'size': 14}, loc='lower right')
     plt.grid(True, linestyle='--', color='gray', linewidth=0.5, alpha=0.5)
     plt.tight_layout()
     plt.savefig(filename, dpi=600)

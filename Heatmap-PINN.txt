@@ -25,7 +25,7 @@ df = pd.DataFrame(data)
 
 
 # 2. Setup the 2x2 figure
-fig, axes = plt.subplots(2, 2, figsize=(11, 10)) # Increased size
+fig, axes = plt.subplots(2, 2, figsize=(11, 8)) # Increased size
 plt.subplots_adjust(hspace=0.4, wspace=0.3)
 
 # 3. Define all properties and W values

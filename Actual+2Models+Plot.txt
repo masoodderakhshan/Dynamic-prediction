@@ -1,0 +1,191 @@
+import pandas as pd
+import numpy as np
+import torch
+import torch.nn as nn
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+import matplotlib.pyplot as plt
+import random
+
+# --- Plotting style (article-quality) ---
+plt.rcParams['font.family'] = 'DejaVu Serif'
+plt.rcParams['font.size'] = 12
+plt.rcParams['axes.labelsize'] = 12
+plt.rcParams['xtick.labelsize'] = 10
+plt.rcParams['ytick.labelsize'] = 10
+plt.rcParams['legend.fontsize'] = 10
+plt.rcParams['figure.titlesize'] = 14
+plt.rcParams['axes.titlepad'] = 15
+
+# --- Load data ---
+weka3_filepath = "/content/WEKA-3.csv"
+weka4_filepath = "/content/WEKA-4.csv"
+df_features = pd.read_csv(weka3_filepath)
+df_raw = pd.read_csv(weka4_filepath, header=None)
+test_ids = df_raw.iloc[0, 1::2].astype(int).tolist()
+disp_steps = df_raw.iloc[2:, 0].astype(float)
+kpa_cols = df_raw.iloc[2:, 1::2].astype(float)
+dfs = []
+for idx, test_id in enumerate(test_ids):
+    df_temp = pd.DataFrame({
+        'Displacement_Step': disp_steps,
+        'Displacement_kPa': kpa_cols.iloc[:, idx],
+        'Test': test_id
+    })
+    dfs.append(df_temp)
+df_displacement = pd.concat(dfs, ignore_index=True)
+df = pd.merge(df_displacement, df_features, on='Test', how='left')
+df.fillna(df.median(numeric_only=True), inplace=True)
+
+# --- Features ---
+features = ['NS', 'Depth', 'W', 'RWD', 'Density', 'Displacement_Step']
+X = df[features].values
+y = df['Displacement_kPa'].values
+
+# --- Split ---
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+# --- Scale ---
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# === Polynomial Regression (PE Model) ===
+degree = 2
+poly = PolynomialFeatures(degree=degree, include_bias=False)
+X_poly_train = poly.fit_transform(X_train_scaled)
+X_poly_test = poly.transform(X_test_scaled)
+poly_model = LinearRegression()
+poly_model.fit(X_poly_train, y_train)
+
+# --- Define physics_equation using fitted poly_model ---
+def physics_equation(X_unscaled):
+    if len(X_unscaled.shape) == 1:
+        X_unscaled = X_unscaled.reshape(1, -1)
+    X_scaled = scaler.transform(X_unscaled)
+    X_poly = poly.transform(X_scaled)
+    return poly_model.predict(X_poly)
+
+# --- Compute y_phys for PINN ---
+y_phys_train = physics_equation(X_train)
+y_phys_test = physics_equation(X_test)
+
+# --- Torch tensors ---
+X_train_t = torch.tensor(X_train_scaled, dtype=torch.float32)
+y_train_t = torch.tensor(y_train.reshape(-1, 1), dtype=torch.float32)
+y_phys_t = torch.tensor(y_phys_train.reshape(-1, 1), dtype=torch.float32)
+X_test_t = torch.tensor(X_test_scaled, dtype=torch.float32)
+y_test_t = torch.tensor(y_test.reshape(-1, 1), dtype=torch.float32)
+
+# --- Simple neural network for PINN ---
+class PINN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(6, 32),
+            nn.ReLU(),
+            nn.Linear(32, 16),
+            nn.ReLU(),
+            nn.Linear(16, 1)
+        )
+    def forward(self, x):
+        return self.layers(x)
+
+model = PINN()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+mse = nn.MSELoss()
+lambda_phys = 0.2  # Weight for physics regularization
+alpha = 0.7  # Weight for physics–data blending
+
+# --- Training loop ---
+for epoch in range(3000):
+    model.train()
+    optimizer.zero_grad()
+    y_ml = model(X_train_t)
+    y_pred = alpha * y_phys_t + (1 - alpha) * y_ml
+    loss_data = mse(y_pred, y_train_t)
+    loss_phys = mse(y_ml, y_phys_t)
+    loss = loss_data + lambda_phys * loss_phys
+    loss.backward()
+    optimizer.step()
+    if epoch % 500 == 0:
+        print(f"Epoch {epoch}: Total Loss = {loss.item():.4f}")
+
+# --- Evaluation for PINN ---
+model.eval()
+with torch.no_grad():
+    y_test_ml = model(X_test_t)
+    y_test_phys = torch.tensor(y_phys_test.reshape(-1, 1), dtype=torch.float32)
+    y_test_pred = alpha * y_test_phys + (1 - alpha) * y_test_ml
+    y_true = y_test_t.numpy().flatten()
+    y_pred = y_test_pred.numpy().flatten()
+    disp_test = X_test[:, -1]
+    y_pred[np.isclose(disp_test, 0)] = 0
+    mae = mean_absolute_error(y_true, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    r2 = r2_score(y_true, y_pred)
+    print(f"\nTest R²: {r2:.4f}, RMSE: {rmse:.4f}, MAE: {mae:.4f}")
+
+# --- Marker shapes for each RWD ---
+markers = {0: 's', 1: 'o', 2: '^', 4: 'D'}  # square, circle, triangle, diamond
+
+# --- Plot 4 random test IDs with actual, PE, and PINN ---
+random_test_ids = random.sample(test_ids, 4)
+fig, axes = plt.subplots(2, 2, figsize=(10, 9), sharex=True, sharey=True)
+axes = axes.flatten()
+
+for i, test_id in enumerate(random_test_ids):
+    ax = axes[i]
+    df_test = df[df['Test'] == test_id]
+    disp = df_test['Displacement_Step'].values
+    actual = df_test['Displacement_kPa'].values
+
+    # Fixed features for this test
+    ns = df_test['NS'].iloc[0]
+    depth = df_test['Depth'].iloc[0]
+    w = df_test['W'].iloc[0]
+    rwd = df_test['RWD'].iloc[0]
+    density = df_test['Density'].iloc[0]
+
+    marker_style = markers.get(rwd, 'o')  # Default to 'o' if RWD not in dict
+
+    # Actual data with line and points
+    ax.plot(disp, actual, label='Actual Data', color='black', marker=marker_style, markersize=5, linewidth=1)
+
+    # Smooth displacement for predictions
+    disp_smooth = np.linspace(0, 15, 100)
+    data_smooth = np.array([[ns, depth, w, rwd, density, d] for d in disp_smooth])
+
+    # PE (Polynomial) prediction with line and markers
+    pred_pe = physics_equation(data_smooth)  # Since physics_equation is PE
+    ax.plot(disp_smooth, pred_pe, label='PE Model', color='blue', linewidth=2, marker='^', markersize=5, markevery=10)
+
+    # PINN prediction with line and markers
+    X_scaled_smooth = scaler.transform(data_smooth)
+    X_t_smooth = torch.tensor(X_scaled_smooth, dtype=torch.float32)
+    with torch.no_grad():
+        y_ml = model(X_t_smooth)
+        y_phys = torch.tensor(physics_equation(data_smooth).reshape(-1, 1), dtype=torch.float32)
+        y_pred_pinn = alpha * y_phys + (1 - alpha) * y_ml
+    pred_pinn = y_pred_pinn.numpy().flatten()
+    pred_pinn[np.isclose(disp_smooth, 0)] = 0  # Set to 0 at Displacement_Step=0
+    ax.plot(disp_smooth, pred_pinn, label='PINN Model', color='orange', linewidth=2, marker='s', markersize=5, markevery=10)
+
+    ax.set_title(f'Test {test_id}: NS={ns:.1f} kPa, W={w:.1f}%, RWD={rwd}', fontsize=13)
+    ax.set_xlabel('Displacement (mm)', fontsize=12)
+    ax.set_ylabel('Shear Stress (kPa)', fontsize=12)
+    ax.legend(title='Models', fontsize=9)
+    ax.grid(True, linestyle='--', alpha=0.6)
+    ax.tick_params(axis='both', labelsize=10)
+
+# --- Global Title and Layout ---
+plt.suptitle('Shear Stress–Displacement Curves for 4 Random Tests\n(Actual vs PE vs PINN Models)',
+             fontsize=16, weight='bold')
+plt.tight_layout(rect=[0, 0, 1, 0.94])
+plt.savefig("Random_Shear_Stress_Displacement_4plots.png", dpi=600, bbox_inches='tight')
+plt.show()
+print("\n4-panel shear stress–displacement figure for random tests saved as 'Random_Shear_Stress_Displacement_4plots.png'")
